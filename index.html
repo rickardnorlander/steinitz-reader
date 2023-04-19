@@ -1,0 +1,389 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8"/>
+    <title>Steinitz;Reader</title>
+    <link rel="stylesheet" href="./node_modules/@chrisoakman/chessboardjs/dist/chessboard-1.0.0.min.css">
+    <link rel="icon" href="data:;base64,iVBORw0KGgo=">
+    <script>
+      // This is to help when running locally with python -m http.server
+      // The CacheStorage API is available when the page is accessed through localhost, but not through 0.0.0.0
+      if (location.hostname === "0.0.0.0") {
+          let url = new URL(location.href);
+          url.hostname = "localhost";
+          location.replace(url);
+      }
+    </script>
+  </head>
+  <body>
+    <div id="otherctr" style="width: 600px; height: 600px">
+      <div id="innerctr" style="position:relative">
+        <div id="myBoard" style="width: 600px; position:absolute; margin:0; padding: 0"></div>
+        <svg id="overlay" style="width: 592px; height: 592px; position:absolute; top:2px; left:2px" viewBox="0 0 8 8">
+          <defs>
+            <marker id='mainhead' orient="auto" markerWidth='3' markerHeight='4' refX='1' refY='2'>
+              <path d='M0,0 V4 L2,2 Z' fill='rgb(100,128,100)'/>
+            </marker>
+            <marker id='varhead' orient="auto" markerWidth='3' markerHeight='4' refX='1' refY='2'>
+              <path d='M0,0 V4 L2,2 Z' fill='rgb(128,128,128)'/>
+            </marker>
+            <marker id='stockhead' orient="auto" markerWidth='3' markerHeight='4' refX='1' refY='2'>
+              <path d='M0,0 V4 L2,2 Z' fill='rgb(80,80,128)'/>
+            </marker>
+          </defs>
+          <g id="overlaybody"></g>
+        </svg>
+      </div>
+    </div>
+    <div id="controls" style="margin-top:25px">
+      <button onclick="backward()" style="font-size:200%"> &nbsp;⇦&nbsp; </button>&nbsp;&nbsp;&nbsp;&nbsp;
+      <button onclick="forward()" id="fwdbtn" style="font-size:200%">&nbsp;⇨&nbsp;</button>
+      <span id="variations"></span>
+    </div>
+    <div id="curmove" style="margin-top:30px;font-weight:bold"></div>
+    <div id="comment" style="margin-top:20px;max-width:700px"></div>
+    <div id="eval" style="margin-top:30px;"></div>
+    <div style="position: absolute; left: 800px; top: 10px">
+      <div><textarea rows=1 placeholder="Pgn" id="pgn"></textarea> &nbsp; <button onclick="importPgn()">Import</button> <span id="importstatus"></span></div>
+      <div id="variation-stack" style="margin-top: 25px"></div>
+    </div>
+
+    <script src="./node_modules/jquery/dist/jquery.min.js"></script>
+    <script src="./node_modules/@chrisoakman/chessboardjs/dist/chessboard-1.0.0.min.js"></script>
+
+    <script type="module">
+      import { Chess } from './node_modules/chess.js/dist/chess.js'
+
+      const config = {
+          draggable: false,
+          position: 'start'
+      }
+      const board = Chessboard('myBoard', config)
+
+      import {Pgn} from "./node_modules/cm-pgn/src/cm-pgn/Pgn.js"
+
+      let pgno = null;
+      let pos;
+      let variationStack;
+
+      function recursivePatch(variation, parent) {
+          variation[0].myprev = parent;
+          variation[0].mynext = 1 < variation.length ? variation[1] : null;
+          for (let i = 1; i < variation.length; ++i) {
+              variation[i].myprev = variation[i-1];
+              variation[i].mynext = i + 1 < variation.length ? variation[i + 1] : null;
+
+              const varvars = variation[i].variations;
+              for (let j = 0; j < varvars.length; ++j) {
+                  recursivePatch(varvars[j], variation[i-1]);
+              }
+          }
+      }
+
+      function getPrev(p) {
+          if (pos === null) return null;
+          return pos.myprev;
+      }
+      function getNext(p) {
+          if (pos === null) {
+              return pgno.history.moves[0];
+          }
+          return pos.mynext;
+      }
+      function getConts(p) {
+          var nextMain = getNext(p)
+          if (nextMain === null) {
+              return null;
+          }
+          return [nextMain, nextMain.variations.map((x) => x[0])];
+      }
+
+      function getComment(p) {
+          var c;
+          if (p === null) {
+              c = pgno.history.moves[0].commentMove;
+          } else {
+              c = p.commentAfter;
+          }
+          return c === undefined ? "" : c;
+      }
+
+      function getSAN(fen, fromto) {
+          const moveIn = {from: fromto.substring(0,2), to: fromto.substring(2, 4)}
+          if (fromto.length > 4) {
+              moveIn.promo = fromto[4];
+          }
+          const chess = new Chess(fen);
+          if (fromto === "e1h1" && chess.get("e1").type === "k") {
+              return "O-O"
+          }
+          if (fromto === "e1a1" && chess.get("e1").type === "k") {
+              return "O-O-O"
+          }
+          if (fromto === "e8h8" && chess.get("e8").type === "k") {
+              return "O-O"
+          }
+          if (fromto === "e8a8" && chess.get("e8").type === "k") {
+              return "O-O-O"
+          }
+          return chess.move(moveIn).san;
+      }
+
+      function formatEval(fen, pvs) {
+          let s = "<table border=0>"
+          for (let i = 0; i < pvs.length; ++i) {
+              const pv = pvs[i];
+              const move = pv.moves.split(" ")[0];
+              const san = getSAN(fen, move);
+              let eva = "";
+              if (pv.mate !== undefined) {
+                  eva = "#" + pv.mate;
+              } else {
+                  eva = pv.cp / 100.0;
+              }
+              s += `<tr><td>${san}</td><td> &nbsp; </td><td>${eva}</td></tr>`;
+          }
+          return s + "</table>";
+      }
+
+      const cache_promise = caches.open("v0");
+
+      async function getCached(url) {
+          const cache = await cache_promise;
+          let entry = await cache.match(url);
+          if (entry === undefined) {
+              entry = await(fetch(url));
+              if (entry.ok || entry.status === 404) {
+                  await cache.put(url, entry)
+                  // This is needed because cache.put consumes the response body.
+                  entry = await cache.match(url);
+              }
+          }
+          if (!entry.ok) {
+              return null;
+          }
+          return entry.json();
+      }
+
+      function getGame() {
+          if (pos === null) {
+              return new Chess()
+          }
+          return new Chess(pos.fen);
+      }
+
+      const lookupX = {"a": 0, "b": 1, "c": 2, "d": 3, "e": 4, "f": 5, "g": 6, "h": 7}
+
+      function getXY(square) {
+          const x = lookupX[square[0]];
+          const y = 8 - parseInt(square[1]);
+          return [x, y]
+      }
+      function drawOverlay() {
+          const parent = document.getElementById("overlaybody")
+          let s = ""
+          if (pos !== null) {
+              const from = getXY(pos.from)
+              const to = getXY(pos.to)
+              s += `
+<rect x=${from[0]} y=${from[1]} width=1 height=1 stroke="rgba(255,255,0,0.6)" fill="none" stroke-width=0.05></rect>
+<rect x=${to[0]} y=${to[1]} width=1 height=1 stroke="rgba(255,255,0,0.6)" fill="none" stroke-width=0.05></rect>`
+          }
+
+          const conts = getConts(pos);
+          if (conts !== null) {
+              const next = conts[0]
+              const from = getXY(next.from);
+              const to = getXY(next.to);
+              s += `
+  <path
+    marker-end='url(#mainhead)'
+    stroke-width='0.2'
+    opacity=0.5
+    fill='none' stroke='rgb(100,128,100)'
+    d='M${from[0]+0.5},${from[1]+0.5}, ${to[0]+0.5},${to[1]+0.5}'
+  />`
+              for (let i = 0; i < conts[1].length; ++i) {
+                  const con = conts[1][i];
+                  const from = getXY(con.from);
+                  const to = getXY(con.to);
+                  s += `
+  <path
+    marker-end='url(#varhead)'
+    stroke-width='0.2'
+    opacity=0.6
+    fill='none' stroke='rgb(128,128,128)'
+    d='M${from[0]+0.5},${from[1]+0.5}, ${to[0]+0.5},${to[1]+0.5}'
+  />`
+              }
+          }
+
+          parent.innerHTML = s
+      }
+
+      const nags = {"$1": "!", "$2": "?", "$3": "!!", "$4": "??", "$5": "!?", "$6": "?!"}
+
+      function formatNag(nag) {
+          if (nag === undefined) {
+              return ""
+          }
+          if (nag in nags) {
+              return nags[nag];
+          }
+          return nag;
+      }
+
+      function formatMove(move, withPly) {
+          let ret = ""
+          if (withPly === true) {
+              if (move.ply % 2 === 1) {
+                  ret += (move.ply + 1) / 2 + ". ";
+              } else {
+                  ret += move.ply / 2 + "..."
+              }
+          }
+          return ret + move.san + formatNag(move.nag);
+      }
+
+      function disp() {
+          const game = getGame();
+          const fenThen = game.fen();
+          board.position(fenThen);
+          const conts = getConts(pos);
+          const nextMain = conts === null ? null : conts[0];
+
+          const fwdbtn = document.getElementById("fwdbtn");
+          if (nextMain === null) {
+              fwdbtn.style.display = "none"
+          } else {
+              fwdbtn.style.display = "initial";
+              //fwdbtn.innerText = formatMove(nextMain);
+          }
+
+          let ihtml = "";
+          if (conts !== null && conts[1].length > 0) {
+              ihtml += ""
+              for (var i = 0; i < conts[1].length; ++i) {
+                  ihtml += " &nbsp;&nbsp;&nbsp;&nbsp;<button style='font-size: 200%' onclick='enterVar(" + i + ")'>" + formatMove(conts[1][i]) + "</button>"
+              }
+          }
+          document.getElementById("variations").innerHTML = ihtml;
+
+          document.getElementById("curmove").innerText = pos === null ? "" : formatMove(pos, true);
+
+          document.getElementById("comment").innerText = getComment(pos);
+
+          document.getElementById("eval").innerText = "";
+
+          let varS = ""
+          if (variationStack.length > 0) {
+              varS = "Variation stack<table>";
+          }
+          for (let i = 0; i < variationStack.length; ++i) {
+              varS += "<tr><td>" + formatMove(variationStack[i], true) + `</td><td><button onclick="popvar(${i})">x</button></td></tr>`;
+          }
+          document.getElementById("variation-stack").innerHTML = varS + "</table>";
+
+          drawOverlay();
+
+          getCached("https://lichess.org/api/cloud-eval?fen="+encodeURIComponent(fenThen)+"&multiPv=5").then((data) => {
+              if (data !== null && game.fen() === fenThen) {
+                  document.getElementById("eval").innerHTML = formatEval(fenThen, data.pvs)
+                  var vfrom = getXY(data.pvs[0].moves.substring(0,2));
+                  var vto = getXY(data.pvs[0].moves.substring(2,4));
+                  document.getElementById("overlaybody").innerHTML += `
+  <path
+    marker-end='url(#stockhead)'
+    stroke-width='0.1'
+    opacity=0.5
+    fill='none' stroke='rgb(80,80,128)'
+    d='M${vfrom[0]+0.5},${vfrom[1]+0.5}, ${vto[0]+0.5},${vto[1]+0.5}'
+  />`
+              }
+          });
+      }
+      function backward() {
+          if (pgno === null) return;
+          if (pos === null) return;
+          const newpos = getPrev(pos);
+          if (newpos !== null && newpos.mynext !== pos) {
+              variationStack.pop();
+          }
+          pos = newpos;
+          disp();
+      }
+      function popvar(i) {
+          pos = variationStack[i].myprev;
+          variationStack.splice(i);
+          disp();
+      }
+      function forward() {
+          if (pgno === null) return;
+          const next = getNext(pos);
+          if (next === null) return;
+          pos = next;
+          disp();
+      }
+      function enterVar(n) {
+          if (pgno === null) return;
+          const conts = getConts(pos);
+          if (conts === null || n >= conts[1].length) return;
+          pos = conts[1][n];
+          variationStack.push(pos);
+          disp();
+      }
+      function importPgn() {
+          let pgn = document.getElementById("pgn").value.trim()
+          let new_pgno = null;
+          let failed = false;
+          try {
+              new_pgno = new Pgn(pgn)
+          } catch(error) {
+              failed = true;
+          }
+          if (new_pgno === null || new_pgno.history.moves.length === 0) {
+              failed = true;
+          }
+          if (failed) {
+              document.getElementById("pgn").value = "";
+              document.getElementById("importstatus").innerText = "Import failed";
+              return
+          }
+          pgno = new_pgno;
+          recursivePatch(pgno.history.moves[0].variation, null);
+          pos = null;
+          document.getElementById("importstatus").innerText = "";
+          recursivePatch(pgno.history.moves[0].variation, null);
+          pos = null;
+          variationStack = []
+          document.getElementById("pgn").value = "";
+          disp();
+      }
+
+      function handleKey(e) {
+          e = e || window.event;
+          if (e.keyCode === 37 || e.keyCode === 8) {
+              backward();
+          }
+          else if (e.keyCode === 39 || e.keyCode === 48 || e.keyCode === 96) {
+              forward();
+          }
+          else if (e.keyCode >= 49 && e.keyCode <= 57) {
+              enterVar(e.keyCode - 49);
+          }
+          else if (e.keyCode >= 97 && e.keyCode <= 105) {
+              enterVar(e.keyCode - 97);
+          }
+
+      }
+
+      document.onkeydown = handleKey;
+      window.forward = forward;
+      window.backward = backward;
+      window.enterVar = enterVar;
+      window.getPos = function (){return pos};
+      window.popvar = popvar;
+      window.importPgn = importPgn;
+    </script>
+  </body>
+</html>
