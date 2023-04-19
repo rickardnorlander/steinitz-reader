@@ -44,7 +44,12 @@
     <div id="comment" style="margin-top:20px;max-width:700px"></div>
     <div id="eval" style="margin-top:30px;"></div>
     <div style="position: absolute; left: 800px; top: 10px">
-      <div><textarea rows=1 placeholder="Pgn" id="pgn"></textarea> &nbsp; <button onclick="importPgn()">Import</button> <span id="importstatus"></span></div>
+      <div>
+        <textarea rows=1 placeholder="Pgn" id="pgn"></textarea> &nbsp;
+        <button onclick="importPgn()">Import</button> <span id="importstatus"></span>
+        <label for="pgnarrow">Pgn arrows</label><input type="checkbox" id="pgnarrow" checked style="accent-color:#EEE" onclick="disp()">
+        <label for="fisharrow">Stockfish arrows</label><input type="checkbox" id="fisharrow" checked style="accent-color:#EEE" onclick="disp()">
+      </div>
       <div id="variation-stack" style="margin-top: 25px"></div>
     </div>
 
@@ -191,7 +196,7 @@
           }
 
           const conts = getConts(pos);
-          if (conts !== null) {
+          if (conts !== null && document.getElementById("pgnarrow").checked) {
               const next = conts[0]
               const from = getXY(next.from);
               const to = getXY(next.to);
@@ -246,6 +251,7 @@
       }
 
       function disp() {
+          if (pgno == null) return;
           const game = getGame();
           const fenThen = game.fen();
           board.position(fenThen);
@@ -291,7 +297,8 @@
                   document.getElementById("eval").innerHTML = formatEval(fenThen, data.pvs)
                   var vfrom = getXY(data.pvs[0].moves.substring(0,2));
                   var vto = getXY(data.pvs[0].moves.substring(2,4));
-                  document.getElementById("overlaybody").innerHTML += `
+                  if (document.getElementById("fisharrow").checked) {
+                      document.getElementById("overlaybody").innerHTML += `
   <path
     marker-end='url(#stockhead)'
     stroke-width='0.1'
@@ -299,6 +306,7 @@
     fill='none' stroke='rgb(80,80,128)'
     d='M${vfrom[0]+0.5},${vfrom[1]+0.5}, ${vto[0]+0.5},${vto[1]+0.5}'
   />`
+                  }
               }
           });
       }
@@ -384,6 +392,7 @@
       window.getPos = function (){return pos};
       window.popvar = popvar;
       window.importPgn = importPgn;
+      window.disp = disp;
     </script>
   </body>
 </html>
