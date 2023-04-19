@@ -54,6 +54,7 @@
     </div>
 
     <script src="./node_modules/jquery/dist/jquery.min.js"></script>
+    <script src="./node_modules/@mliebelt/pgn-parser/lib/index.umd.js"></script>
     <script src="./node_modules/@chrisoakman/chessboardjs/dist/chessboard-1.0.0.min.js"></script>
 
     <script type="module">
@@ -65,35 +66,54 @@
       }
       const board = Chessboard('myBoard', config)
 
-      import {Pgn} from "./node_modules/cm-pgn/src/cm-pgn/Pgn.js"
-
       let pgno = null;
       let pos;
       let variationStack;
 
-      function recursivePatch(variation, parent) {
-          variation[0].myprev = parent;
-          variation[0].mynext = 1 < variation.length ? variation[1] : null;
-          for (let i = 1; i < variation.length; ++i) {
-              variation[i].myprev = variation[i-1];
-              variation[i].mynext = i + 1 < variation.length ? variation[i + 1] : null;
-
-              const varvars = variation[i].variations;
-              for (let j = 0; j < varvars.length; ++j) {
-                  recursivePatch(varvars[j], variation[i-1]);
+      function processMoves(variation, parent, initialPly) {
+          let ply = initialPly;
+          let ret = variation.map((x) => new Object())
+          let chess = parent !== null ? new Chess(parent.fen) : new Chess();
+          if (ply === null) {
+              ply = (variation[0].moveNumber-1) * 2
+              if (variation[0].turn === "b") {
+                  ply += 1;
               }
           }
+          var prev = parent;
+          for (var i = 0; i < variation.length; ++i) {
+              var curIn = variation[i];
+              var curRet = ret[i];
+              const themove = chess.move(curIn.notation.notation);
+              curRet.from = themove.from;
+              curRet.to = themove.to;
+              curRet.fen = chess.fen();
+              curRet.prev = prev;
+              curRet.next = i + 1 < variation.length ? ret[i + 1] : null;
+              curRet.ply = ply + i;
+              curRet.san = curIn.notation.notation;
+              curRet.nag = curIn.nag;
+
+              curRet.variations = []
+              curRet.commentAfter = curIn.commentAfter;
+              const varvars = curIn.variations;
+              for (let j = 0; j < varvars.length; ++j) {
+                  curRet.variations.push(processMoves(varvars[j], prev, ply + i));
+              }
+              prev = curRet;
+          }
+          return ret;
       }
 
       function getPrev(p) {
           if (pos === null) return null;
-          return pos.myprev;
+          return pos.prev;
       }
       function getNext(p) {
           if (pos === null) {
-              return pgno.history.moves[0];
+              return pgno.moves[0];
           }
-          return pos.mynext;
+          return pos.next;
       }
       function getConts(p) {
           var nextMain = getNext(p)
@@ -106,7 +126,7 @@
       function getComment(p) {
           var c;
           if (p === null) {
-              c = pgno.history.moves[0].commentMove;
+              c = pgno.gameComment === null ? "": pgno.gameComment.comment;
           } else {
               c = p.commentAfter;
           }
@@ -229,25 +249,30 @@
       const nags = {"$1": "!", "$2": "?", "$3": "!!", "$4": "??", "$5": "!?", "$6": "?!"}
 
       function formatNag(nag) {
-          if (nag === undefined) {
-              return ""
-          }
           if (nag in nags) {
               return nags[nag];
           }
           return nag;
       }
+      function formatNags(nags) {
+          if (nags === null) {
+              return "";
+          }
+          else {
+              return nags.map(formatNag).join(" ");
+          }
+      }
 
       function formatMove(move, withPly) {
           let ret = ""
           if (withPly === true) {
-              if (move.ply % 2 === 1) {
-                  ret += (move.ply + 1) / 2 + ". ";
+              if (move.ply % 2 === 0) {
+                  ret += (move.ply + 2) / 2 + ". ";
               } else {
-                  ret += move.ply / 2 + "..."
+                  ret += (move.ply + 1) / 2 + "..."
               }
           }
-          return ret + move.san + formatNag(move.nag);
+          return ret + move.san + formatNags(move.nag);
       }
 
       function disp() {
@@ -314,14 +339,14 @@
           if (pgno === null) return;
           if (pos === null) return;
           const newpos = getPrev(pos);
-          if (newpos !== null && newpos.mynext !== pos) {
+          if (newpos !== null && newpos.next !== pos) {
               variationStack.pop();
           }
           pos = newpos;
           disp();
       }
       function popvar(i) {
-          pos = variationStack[i].myprev;
+          pos = variationStack[i].prev;
           variationStack.splice(i);
           disp();
       }
@@ -340,25 +365,31 @@
           variationStack.push(pos);
           disp();
       }
+
       function importPgn() {
           let pgn = document.getElementById("pgn").value.trim()
-          let new_pgno = null;
+
+
+          let new_pgnos = null;
           let failed = false;
           try {
-              new_pgno = new Pgn(pgn)
+              new_pgnos = PgnParser.parse(pgn)
           } catch(error) {
+              console.log(error);
               failed = true;
           }
-          if (new_pgno === null || new_pgno.history.moves.length === 0) {
+          if (new_pgnos.length !== 1 || new_pgnos[0] === null || new_pgnos[0].moves.length === 0) {
               failed = true;
           }
           if (failed) {
               document.getElementById("pgn").value = "";
-              document.getElementById("importstatus").innerText = "Import failed";
+              document.getElementById("importstatus").innerHTML = "Import failed &nbsp;&nbsp;&nbsp;";
               return
           }
-          pgno = new_pgno;
-          recursivePatch(pgno.history.moves[0].variation, null);
+          let new_pgno = new_pgnos[0];
+          var processed_moves = processMoves(new_pgno.moves, null, null);
+          pgno = {moves: processed_moves, gameComment: new_pgno.gameComment}
+          //console.log(new_pgno);
           pos = null;
           document.getElementById("importstatus").innerText = "";
           variationStack = []

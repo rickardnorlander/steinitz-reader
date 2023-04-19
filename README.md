@@ -12,7 +12,7 @@ This project is a webapp for viewing annotated chess games in PGN format. The ma
 
 * The "variation stack" helps you remember whether you are looking at the mainline, a variation or sub-variation, and lets you easily go back to mainline or a parent variation.
 
-* Overlaid arrows helps you compare the played move (green), variations (grey) and stockfish's pick (blue).
+* Overlaid arrows helps you compare the main move (green), variations (grey) and stockfish's pick (blue).
 
 [Try it now](https://sr.rinor.se)
 
@@ -20,7 +20,7 @@ This project is a webapp for viewing annotated chess games in PGN format. The ma
 
  * chess.js
  * chessboard.js
- * cm-pgn
+ * @mliebelt/pgn-parser
  * Wikipedia chess pieces
  * Lichess cloud eval
 
