@@ -318,7 +318,7 @@
           drawOverlay();
 
           getCached("https://lichess.org/api/cloud-eval?fen="+encodeURIComponent(fenThen)+"&multiPv=5").then((data) => {
-              if (data !== null && game.fen() === fenThen) {
+              if (data !== null && getGame().fen() === fenThen) {
                   document.getElementById("eval").innerHTML = formatEval(fenThen, data.pvs)
                   var vfrom = getXY(data.pvs[0].moves.substring(0,2));
                   var vto = getXY(data.pvs[0].moves.substring(2,4));
